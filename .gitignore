@@ -1,0 +1,25 @@
+# Исполняемые файлы (скомпилированные бинарники)
+# В Go мы компилируем проект в один тяжелый файл, его не нужно пушить в репозиторий
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Временный исполняемый файл, который создается при команде 'go run main.go'
+/___go_build_*
+
+# Логи и кэш
+*.log
+.build/
+
+# Типовая секция
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
