@@ -1,73 +1,95 @@
 package main
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"sync"
+)
 
-// Описываем структуру Product
-type Product struct {
-	Title       string  // Название товара
-	Price       float64 // Цена с цифрами после запятой для скидок
-	OldPrice    float64 // Добавим поле, чтобы помнить цену БЕЗ скидки
-	Description string  // Описание товара
-	Image       string  // Изображение товара
-	IsActive    bool    // Флаг: активен ли товар
-	Quantity    int     // Количество товара на складе
+// Структура для нашего "дождливого" состояния
+type WeatherMood struct {
+	Weather        string   `json:"weather"`
+	Recommendation string   `json:"recommendation"`
+	Playlist       []string `json:"playlist"`
 }
 
-// Это обычная функция
-/*
-func applyDiscount(p Product) {
-	p.Price = p.Price - p.Price * 0.1 // Увеличиваем возраст внутри функции
-	fmt.Println("Цена со скидкой внутри функции:", p.Price)
-}
-*/
-
-// Это МЕТОД структуры Product.
-// (p *Product) — это "получатель" (receiver). Аналог $this в PHP.
-// Мы используем указатель *, чтобы изменить цену прямо внутри оригинального товара.
-// Без указателя * (p Product), чтобы просто прочитать цену.
-func (p *Product) applyDiscount(percent float64) {
-	p.OldPrice = p.Price                  // Сохраняем старую цену
-	p.Price = p.Price * (1 - percent/100) // Вычисляем новую цену со скидкой
+// Структура специально для приема нового трека через POST-запрос
+type TrackRequest struct {
+	TrackName string `json:"track_name"`
 }
 
-// Метод Sell структуры Product. Уменьшает количество товара на складе. С указателем *, потому что количество товара на складе уменьшается.
-func (p *Product) Sell(amount int) {
-	// Проверка amount меньше или равен p.Quantity
-	if amount <= p.Quantity {
-		p.Quantity = p.Quantity - amount // Или сокращенно p.Quantity -= amount
-
-		return
+// Глобальные переменные (для простоты, пока без БД)
+// sync.Mutex нужен, чтобы безопасно изменять данные из разных запросов одновременно
+var (
+	mutex       sync.Mutex
+	currentMood = WeatherMood{
+		Weather:        "Дождливо и серо",
+		Recommendation: "Заварить крепкий чай и кодить на Go",
+		Playlist: []string{
+			"Lofi Girl - Chillhop Radio",
+			"The Neighborhood - Sweater Weather",
+		},
 	}
-
-	fmt.Printf("Ошибка: столько товара нет в наличии\n")
-}
+)
 
 func main() {
-	/*
-		product1 := Product{Title: "Товар", Price: 200, Description: "Описание", Image: "image", IsActive: true, Quantity: 5}
+	// Оставляем один роут, но внутри хендлера будем разделять GET и POST
+	http.HandleFunc("/api/mood", moodHandler)
 
-		applyDiscount(product1)
-
-		fmt.Println("Цена со скидкой", product1.Price)
-	*/
-
-	product1 := Product{
-		Title:    "Смартфон GoPhone",
-		Price:    50000.0,
-		Quantity: 10,
+	fmt.Println("🌧️  Сервер запущен на http://localhost:8080/api/mood")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal(err)
 	}
+}
 
-	// Вызываем метод через точку, прямо как в ООП!
-	// Обрати внимание: Go сам автоматически передаст адрес (&product1) под капотом.
-	// Вызываем метод applyDiscount() структуры Product с параметром 10 discount
-	product1.applyDiscount(10) // Скидка 10%
+func moodHandler(w http.ResponseWriter, r *http.Request) {
+	// Устанавливаем общий заголовок ответа для всех методов
+	w.Header().Set("Content-Type", "application/json")
 
-	// Вызываем метод Sell и продаем товар
-	product1.Sell(5) // Продали 5 товаров
+	switch r.Method {
+	case http.MethodGet:
+		// --- ОБРАБОТКА GET ЗАПРОСА (Отдаем данные) ---
+		mutex.Lock() // Блокируем для безопасного чтения
+		json.NewEncoder(w).Encode(currentMood)
+		mutex.Unlock()
 
-	fmt.Printf("Товар: %s\n", product1.Title)
-	fmt.Printf("Старая цена: %.2f руб.\n", product1.OldPrice)
-	fmt.Printf("Новая цена со скидкой: %.2f руб.\n", product1.Price)
-	fmt.Printf("В наличии: %d\n", product1.Quantity)
+	case http.MethodPost:
+		// --- ОБРАБОТКА POST ЗАПРОСА (Принимаем данные) ---
+		var req TrackRequest
 
+		// json.NewDecoder читает тело запроса (r.Body) и записывает данные в структуру req.
+		// Обрати внимание на оператор & — мы передаем указатель, чтобы метод мог изменить req!
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Невалидный JSON"})
+			return
+		}
+
+		// Проверяем, что нам не прислали пустую строку
+		if req.TrackName == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Поле track_name не должно быть пустым"})
+			return
+		}
+
+		// Модифицируем наши данные в памяти
+		mutex.Lock()
+		currentMood.Playlist = append(currentMood.Playlist, req.TrackName)
+		mutex.Unlock()
+
+		// Возвращаем статус 201 Created и обновленный плейлист
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Трек успешно добавлен в дождливый плейлист!",
+			"added":   req.TrackName,
+		})
+
+	default:
+		// Если метод не GET и не POST
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Метод не поддерживается"})
+	}
 }
