@@ -14,7 +14,7 @@ import "fmt"
 * @return string
  */
 // vs code не подсвечивает все эти @param и @return - значит тут так не принято
-
+// Это обычная функция, а не хэндлер. Хэндлер это в http
 func divide(a float64, b float64) (float64, string) {
 	if b == 0 {
 		// Если делим на ноль, возвращаем 0 и текст ошибки
